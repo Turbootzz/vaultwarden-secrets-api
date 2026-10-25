@@ -997,3 +997,52 @@ func TestSync_SSHPrivateKeyDecryptFailureFailsTheCipher(t *testing.T) {
 		t.Fatalf("items=%d failed=%v; want the SSH cipher marked failed", len(items), failed)
 	}
 }
+
+func TestSync_DecryptsCiphersWithItemKey(t *testing.T) {
+	userKey := testUserKey()
+
+	// Per-item key as newer clients create it: 64 random bytes wrapped with the user key.
+	raw := make([]byte, 64)
+	for i := range raw {
+		raw[i] = byte(200 - i)
+	}
+	itemKey := SymmetricKey{EncKey: raw[:32], MacKey: raw[32:]}
+	wrapped, err := encryptType2CipherBytes(raw, userKey)
+	if err != nil {
+		t.Fatalf("wrap item key: %v", err)
+	}
+	// Wrapped with the wrong key: unwrapping must fail and count the cipher as failed.
+	badWrapped, err := encryptType2CipherBytes(raw, testOrgKey())
+	if err != nil {
+		t.Fatalf("wrap bad item key: %v", err)
+	}
+
+	newName := mustEncryptType2Cipher(t, "BREVO_API_KEY", itemKey)
+	newPass := mustEncryptType2Cipher(t, "xkeysib-test", itemKey)
+	oldName := mustEncryptType2Cipher(t, "legacy-item", userKey)
+	badName := mustEncryptType2Cipher(t, "broken-item", itemKey)
+
+	body := fmt.Sprintf(`{"ciphers":[
+		{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","type":1,"name":%q,"key":%q,"login":{"password":%q}},
+		{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","type":1,"name":%q,"key":null},
+		{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","type":1,"name":%q,"key":%q}
+	]}`, newName, wrapped, newPass, oldName, badName, badWrapped)
+
+	items, _, failed, err := serveRawSync(t, body).Sync(t.Context())
+	if err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+	if len(items) != 2 || len(failed) != 1 {
+		t.Fatalf("got %d items, %d failed; want 2 items, 1 failed", len(items), len(failed))
+	}
+	got := map[string]string{}
+	for _, it := range items {
+		got[it.Name] = it.Password
+	}
+	if got["BREVO_API_KEY"] != "xkeysib-test" {
+		t.Errorf("item-key cipher password = %q, want xkeysib-test", got["BREVO_API_KEY"])
+	}
+	if _, ok := got["legacy-item"]; !ok {
+		t.Errorf("cipher without item key must still decrypt with the user key")
+	}
+}

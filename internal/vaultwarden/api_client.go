@@ -86,6 +86,9 @@ type SyncCipher struct {
 	Card           *SyncCard   `json:"card"`
 	SSHKey         *SyncSSHKey `json:"sshKey"`
 	Fields         []SyncField `json:"fields"`
+	// Key is the per-item key (cipher key encryption), wrapped with the user or
+	// org key. Newer Bitwarden clients set it on every item they create.
+	Key *string `json:"key"`
 }
 
 // SyncLogin contains encrypted login data.
@@ -588,6 +591,18 @@ func (ac *APIClient) Sync(ctx context.Context) ([]DecryptedItem, SyncNameMaps, [
 				}
 				continue
 			}
+		}
+
+		if c.Key != nil && strings.TrimSpace(*c.Key) != "" {
+			itemKey, err := DecryptCipherKey(*c.Key, decryptKey)
+			if err != nil {
+				logger.Debug.Printf("Failed to unwrap item key for cipher %s: %v", c.ID, err)
+				if c.ID != "" {
+					failed = append(failed, newFailedCipher(c))
+				}
+				continue
+			}
+			decryptKey = itemKey
 		}
 
 		item, err := decryptCipher(c, decryptKey)

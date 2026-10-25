@@ -392,6 +392,29 @@ func DecryptOrgKey(encryptedOrgKey string, privateKey *rsa.PrivateKey) (Symmetri
 	}, nil
 }
 
+// DecryptCipherKey unwraps a per-item key (cipher key encryption) with the
+// user or organization key that protects the item.
+func DecryptCipherKey(encryptedKey string, key SymmetricKey) (SymmetricKey, error) {
+	cs, err := ParseCipherString(encryptedKey)
+	if err != nil {
+		return SymmetricKey{}, fmt.Errorf("parse cipher key: %w", err)
+	}
+
+	decrypted, err := cs.Decrypt(key)
+	if err != nil {
+		return SymmetricKey{}, fmt.Errorf("decrypt cipher key: %w", err)
+	}
+
+	if len(decrypted) != 64 {
+		return SymmetricKey{}, fmt.Errorf("unexpected cipher key length: %d (expected 64)", len(decrypted))
+	}
+
+	return SymmetricKey{
+		EncKey: decrypted[:32],
+		MacKey: decrypted[32:],
+	}, nil
+}
+
 // pkcs7Unpad removes PKCS#7 padding.
 func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {
 	if len(data) == 0 {
